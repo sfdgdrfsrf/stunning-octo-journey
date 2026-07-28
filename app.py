@@ -655,6 +655,21 @@ if not os.path.isdir(os.path.dirname(COOKIES_PATH)) or os.path.dirname(COOKIES_P
     COOKIES_PATH = str(BASE_DIR / "cookies.txt")
     os.environ["COOKIES_FILE"] = COOKIES_PATH
 
+# Inject cookies from a base64-encoded env var (Railway secret — survives redeploys).
+# Usage on Railway:
+#   COOKIES_B64=$(base64 -w0 cookies.txt)  # then paste into Railway env var
+# On startup, if COOKIES_B64 is set, decode + write to COOKIES_PATH.
+_cookies_b64 = os.environ.get("COOKIES_B64", "").strip()
+if _cookies_b64:
+    import base64 as _b64
+    try:
+        decoded = _b64.b64decode(_cookies_b64).decode("utf-8", errors="replace")
+        with open(COOKIES_PATH, "w") as _f:
+            _f.write(decoded)
+        print(f"[verity-server] cookies injected from COOKIES_B64 ({len(decoded)} bytes) -> {COOKIES_PATH}")
+    except Exception as _e:
+        print(f"[verity-server] WARNING: failed to decode COOKIES_B64: {_e}")
+
 @app.route("/api/cookies", methods=["POST"])
 def api_cookies_upload():
     if "file" not in request.files:
