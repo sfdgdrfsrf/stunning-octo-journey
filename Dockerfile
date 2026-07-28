@@ -35,5 +35,8 @@ ENV SCREEN_DIR_OVERRIDE=/data/screenshots
 
 EXPOSE 8080
 
-# Gunicorn: 4 workers, 120s per request (downloads can be slow)
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8080", "--timeout", "180", "app:app"]
+# Gunicorn: 1 worker (in-memory job store must be shared across requests,
+# so we can't scale horizontally without external state like Redis).
+# Threaded=True inside Flask handles concurrent requests within the worker.
+# 180s timeout because yt-dlp downloads can be slow.
+CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:8080", "--timeout", "180", "app:app"]
