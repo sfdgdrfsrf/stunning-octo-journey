@@ -1,0 +1,9 @@
+[deploy]
+# Railway auto-detects the Dockerfile. Nothing else needed.
+# Set these env vars in the Railway dashboard (or via `railway variables`):
+#   VERITY_API_TOKEN = <some random string>   (optional but recommended)
+#   PORT             = 8080                   (Railway injects this automatically)
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
