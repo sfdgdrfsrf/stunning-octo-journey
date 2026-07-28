@@ -153,6 +153,7 @@ threading.Thread(target=janitor, daemon=True).start()
 # ---------------------------------------------------------------------------
 def _ytdl_version():
     try:
+        # --no-call-home was removed in recent yt-dlp, so don't pass it
         out = subprocess.check_output(["yt-dlp", "--version"], stderr=subprocess.STDOUT, timeout=10)
         return out.decode(errors="ignore").strip()
     except Exception as e:
@@ -165,15 +166,27 @@ def _run_ytdlp(url: str, outpath: str, audio_only: bool = True) -> dict:
         "--no-playlist",
         "--no-warnings",
         "--no-progress",
-        "--no-call-home",
         "--retries", "3",
         "--fragment-retries", "3",
         "--socket-timeout", "20",
         "--geo-bypass",
+        # YouTube "Sign in to confirm you're not a bot" workaround:
+        # Use the android player client first (less aggressive bot detection),
+        # fall back to web_safari, then web. Order matters.
+        "--extractor-args", "youtube:player_client=android,web_safari,web",
+        # Use the new PO token provider if available
+        "--extractor-args", "youtube:player_skip=webpage,configs",
         "-f", "bestaudio/best" if audio_only else "best",
     ]
     if audio_only:
         cmd += ["--extract-audio", "--audio-format", "mp3", "--audio-quality", "0"]
+
+    # Optional cookies file — set COOKIES_FILE env var to /data/cookies.txt
+    # (or any path). Lets users bypass YouTube bot detection entirely.
+    cookies_file = os.environ.get("COOKIES_FILE", "").strip()
+    if cookies_file and os.path.exists(cookies_file):
+        cmd += ["--cookies", cookies_file]
+
     cmd += ["-o", outpath, url]
 
     try:
@@ -200,10 +213,14 @@ def _run_ytdlp(url: str, outpath: str, audio_only: bool = True) -> dict:
     # Pull video metadata via --dump-json (best-effort)
     meta = {}
     try:
-        mproc = subprocess.run(
-            ["yt-dlp", "--no-playlist", "--dump-json", "--skip-download", url],
-            capture_output=True, timeout=30
-        )
+        mcmd = [
+            "yt-dlp", "--no-playlist", "--no-warnings", "--dump-json", "--skip-download",
+            "--extractor-args", "youtube:player_client=android,web_safari,web",
+            url
+        ]
+        if cookies_file and os.path.exists(cookies_file):
+            mcmd += ["--cookies", cookies_file]
+        mproc = subprocess.run(mcmd, capture_output=True, timeout=30)
         if mproc.returncode == 0:
             meta = json.loads(mproc.stdout.decode(errors="ignore").splitlines()[0])
     except Exception:
@@ -226,10 +243,14 @@ def _run_ytdlp(url: str, outpath: str, audio_only: bool = True) -> dict:
 def _yt_search(query: str, n: int = 5) -> list:
     n = max(1, min(n, 20))
     cmd = [
-        "yt-dlp", "--no-playlist", "--no-warnings", "--no-call-home",
+        "yt-dlp", "--no-playlist", "--no-warnings",
         "--flat-playlist", "--dump-json",
         f"ytsearch{n}:{query}",
     ]
+    # Optional cookies file for YouTube search too
+    cookies_file = os.environ.get("COOKIES_FILE", "").strip()
+    if cookies_file and os.path.exists(cookies_file):
+        cmd += ["--cookies", cookies_file]
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=45)
     except Exception:
@@ -618,6 +639,60 @@ def api_roblox_model():
         "store_url": f"https://create.roblox.com/store/models/{aid}",
         "loaded_via": "game:GetObjects or InsertService:LoadAsset on the client side",
     })
+
+# ---------------------------------------------------------------------------
+# Cookies upload — bypasses YouTube "Sign in to confirm you're not a bot"
+# ---------------------------------------------------------------------------
+# Usage:
+#   1. Export cookies from a browser where you're logged into YouTube
+#      (use the "Get cookies.txt" Chrome extension, or `yt-dlp --cookies-from-browser chrome --cookies cookies.txt`)
+#   2. POST the cookies.txt file to /api/cookies (multipart/form-data)
+#   3. Server saves it to /data/cookies.txt and sets COOKIES_FILE env var
+#   4. All future yt-dlp calls will use --cookies /data/cookies.txt
+COOKIES_PATH = os.environ.get("COOKIES_FILE", "/data/cookies.txt").strip()
+# If running locally (no /data dir), fall back to a path next to app.py
+if not os.path.isdir(os.path.dirname(COOKIES_PATH)) or os.path.dirname(COOKIES_PATH) == "":
+    COOKIES_PATH = str(BASE_DIR / "cookies.txt")
+    os.environ["COOKIES_FILE"] = COOKIES_PATH
+
+@app.route("/api/cookies", methods=["POST"])
+def api_cookies_upload():
+    if "file" not in request.files:
+        # Also accept raw body text
+        body = request.get_data(as_text=True)
+        if not body or "# Netscape HTTP Cookie File" not in body:
+            return jsonify({"error": "upload a file field 'file' or POST raw Netscape cookies.txt content"}), 400
+        try:
+            with open(COOKIES_PATH, "w") as f:
+                f.write(body)
+        except Exception as e:
+            return jsonify({"error": f"could not write cookies file: {e}"}), 500
+        return jsonify({"success": True, "path": COOKIES_PATH, "size": len(body)})
+
+    f = request.files["file"]
+    try:
+        f.save(COOKIES_PATH)
+    except Exception as e:
+        return jsonify({"error": f"could not save cookies file: {e}"}), 500
+    return jsonify({"success": True, "path": COOKIES_PATH, "size": os.path.getsize(COOKIES_PATH)})
+
+@app.route("/api/cookies", methods=["GET"])
+def api_cookies_status():
+    exists = os.path.exists(COOKIES_PATH)
+    return jsonify({
+        "configured": exists,
+        "path": COOKIES_PATH,
+        "size": os.path.getsize(COOKIES_PATH) if exists else 0,
+    })
+
+@app.route("/api/cookies", methods=["DELETE"])
+def api_cookies_delete():
+    try:
+        if os.path.exists(COOKIES_PATH):
+            os.unlink(COOKIES_PATH)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ---------------------------------------------------------------------------
 # Main
