@@ -12,17 +12,28 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install OS deps yt-dlp sometimes needs (ca-certificates, ffmpeg)
+# Install OS deps:
+#  - ffmpeg: audio extraction for yt-dlp
+#  - nodejs: REQUIRED by yt-dlp 2026+ to solve YouTube's "n challenge" (JS)
+#            Without it, only storyboard images are available — no audio/video.
+#  - curl, ca-certificates: general HTTP hygiene
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg ca-certificates curl \
+        nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Python deps
+# Python deps (yt-dlp-ejs is the challenge-solver script distribution
+# that yt-dlp 2026+ loads at runtime when a JS runtime is available)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-install Chromium for Playwright (the base image already has it, but be explicit)
 RUN python -m playwright install chromium
+
+# Smoke-test: confirm node + yt-dlp-ejs are usable inside the container.
+# This will print "node-<version>" if everything is wired up correctly.
+RUN node --version && \
+    python -c "import yt_dlp_ejs; print('yt_dlp_ejs OK')"
 
 # App code
 COPY app.py .
@@ -31,6 +42,8 @@ COPY app.py .
 RUN mkdir -p /data/downloads /data/screenshots
 ENV DOWNLOAD_DIR_OVERRIDE=/data/downloads
 ENV SCREEN_DIR_OVERRIDE=/data/screenshots
+# Optional cookies file path — set COOKIES_B64 in Railway env to inject it
+ENV COOKIES_FILE=/data/cookies.txt
 
 EXPOSE 8080
 
