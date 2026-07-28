@@ -269,7 +269,8 @@ def index():
             "POST /api/download        {url, filename?}",
             "GET  /api/download/<id>",
             "GET  /downloads/<filename>",
-            "POST /api/browse          {url, width?, height?, selector?, wait?}",
+            "POST /api/browse          {url, width?, height?, selector?, wait?}  (async)",
+            "POST /api/browse-sync     {url, ...}  (sync, returns result directly)",
             "GET  /api/screenshot?url=...&w=...&h=...",
             "GET  /api/websearch?q=<query>&n=<n>",
             "POST /api/play?q=<query>",
@@ -453,6 +454,36 @@ def api_browse():
                      args=(jid, url, width, height, selector, wait_ms),
                      daemon=True).start()
     return jsonify({"id": jid, "status": "pending", "status_url": f"/api/download/{jid}"})
+
+# SYNCHRONOUS browse — returns the result directly in one request.
+# Use this when the client can't reliably poll (e.g. multi-worker hosts,
+# or clients that don't keep job IDs around). Slower but simpler.
+@app.route("/api/browse-sync", methods=["POST", "GET"])
+def api_browse_sync():
+    if request.method == "GET":
+        url = (request.args.get("url") or "").strip()
+        width = int(request.args.get("w", DEFAULT_W))
+        height = int(request.args.get("h", DEFAULT_H))
+        wait_ms = int(request.args.get("wait", "1500"))
+        selector = (request.args.get("selector") or "").strip() or None
+    else:
+        data = request.get_json(silent=True) or {}
+        url = (data.get("url") or "").strip()
+        width = int(data.get("width", DEFAULT_W))
+        height = int(data.get("height", DEFAULT_H))
+        wait_ms = int(data.get("wait", 1500))
+        selector = (data.get("selector") or "").strip() or None
+    if not url:
+        return jsonify({"error": "missing 'url'"}), 400
+    if not re.match(r"^https?://", url):
+        url = "https://" + url
+    try:
+        res = _browse_sync(url, width, height, selector, wait_ms)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if not res.get("success"):
+        return jsonify({"error": res.get("error", "unknown")}), 500
+    return jsonify(res)
 
 # Synchronous one-shot screenshot — returns PNG bytes directly
 @app.route("/api/screenshot")
