@@ -1,9 +1,8 @@
 # ---- Verity All-in-One Server ----
-# Stays small (Alpine Chromium refuses to run Playwright reliably),
-# so we use the official Playwright Python image which already ships
-# every browser + system dependency.
+# Uses Microsoft's official Playwright Python image (ships Chromium + system deps).
+# Tag pinned to v1.49+ which is built on Python 3.12 (yt-dlp 2026 dropped 3.10 support).
 
-FROM mcr.microsoft.com/playwright/python:v1.46.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.49.0-noble
 
 # Don't write .pyc files & flush stdout immediately so logs show up in Render/Railway
 ENV PYTHONDONTWRITEBYTECODE=1 \
